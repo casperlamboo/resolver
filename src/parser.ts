@@ -243,11 +243,11 @@ function rightAssociativeBinaryOperatorParser(
     prev_parser: parsimmon.Parser<AST.Expression>,
     operator_parser: parsimmon.Parser<AST.IBinaryOperator>,
 ): parsimmon.Parser<AST.Expression> {
-    const parser: parsimmon.Parser<AST.Expression> = parsimmon.lazy(() => parsimmon
-        .seq(prev_parser, operator_parser, parser)
-        .map(([left_expression, constructor, right_expression]) => new constructor(left_expression, right_expression))
-        .or(prev_parser)
-    );
+    const parser: parsimmon.Parser<AST.Expression> = parsimmon.lazy(() => prev_parser.chain((left_expression) => parsimmon
+        .seq(operator_parser, parser)
+        .map(([constructor, right_expression]) => new constructor(left_expression, right_expression))
+        .or(parsimmon.succeed(left_expression))
+    ));
     return parser;
 }
 
@@ -261,17 +261,16 @@ function rightAssociativeBinaryOperatorParser(
  * @returns A parser that parses an if-else expression.
  */
 function condition(prev_parser: parsimmon.Parser<AST.Expression>): parsimmon.Parser<AST.Expression> {
-    const parser: parsimmon.Parser<AST.Expression> = parsimmon.lazy(() => parsimmon
+    const parser: parsimmon.Parser<AST.Expression> = parsimmon.lazy(() => prev_parser.chain((a) => parsimmon
         .seq(
-            prev_parser,
             parsimmon.string("if").trim(parsimmon.optWhitespace),
             prev_parser,
             parsimmon.string("else").trim(parsimmon.optWhitespace),
             parser,
         )
-        .map(([a, _if, condition, _else, b]) => new AST.Condition(condition, a, b))
-        .or(prev_parser)
-    );
+        .map(([_if, condition, _else, b]) => new AST.Condition(condition, a, b))
+        .or(parsimmon.succeed(a))
+    ));
     return parser;
 };
 
