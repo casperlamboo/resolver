@@ -156,7 +156,6 @@ const list_parser: parsimmon.Parser<AST.Expression> = parsimmon.lazy(() => {
  * ```
  * apply_parser.tryParse("a(1, 2, 3)") // => new AST.Apply(new AST.Variable("a"), [new AST.Number(1), new AST.Number(2), new AST.Number(3)])
  * apply_parser.tryParse("math.sqrt(9)") // => new AST.Apply(new AST.Variable("math.sqrt"), [new AST.Number(9)])
- * apply_parser.tryParse("(a if True else b)(1)") // => new AST.Apply(new AST.Condition(new AST.Boolean(true), new AST.Variable("a"), new AST.Variable("b")), [new AST.Number(1)])
  * ```
  */
 const apply_parser: parsimmon.Parser<AST.Expression> = parsimmon.lazy(() => {
@@ -196,9 +195,29 @@ function createOperatorParser<T = AST.IBinaryOperator | AST.IUnaryOperator>(
 }
 
 /**
+ * Parse a unary operator.
+ * 
+ * @param prev_parser - The previous associativity level parser.
+ * @param operator_parser - A parser that parses an operator and returns a constructor for the operator.
+ * @returns 
+ */
+function unaryPreFixParser(
+    prev_parser: parsimmon.Parser<AST.Expression>,
+    operator_parser: parsimmon.Parser<AST.IUnaryOperator>,
+): parsimmon.Parser<AST.Expression> {
+    const parser: parsimmon.Parser<AST.Expression> = parsimmon.lazy(() => {
+        return parsimmon
+            .seq(operator_parser, parser)
+            .map(([constructor, expression]) => new constructor(expression))
+            .or(prev_parser);
+    });
+    return parser;
+}
+
+/**
  * Parse a left-associative binary operator.
  * 
- * @param prev_parser 
+ * @param prev_parser - The previous associativity level parser.
  * @param operator_parser - A parser that parses an operator and returns a constructor for the operator.
  * @returns A parser that parses a left-associative binary operator.
  */
@@ -219,23 +238,10 @@ function leftAssociativeBinaryOperatorParser(
         }, first));
 }
 
-function unaryPreFixParser(
-    prev_parser: parsimmon.Parser<AST.Expression>,
-    operator_parser: parsimmon.Parser<AST.IUnaryOperator>,
-): parsimmon.Parser<AST.Expression> {
-    const parser: parsimmon.Parser<AST.Expression> = parsimmon.lazy(() => {
-        return parsimmon
-            .seq(operator_parser, parser)
-            .map(([constructor, expression]) => new constructor(expression))
-            .or(prev_parser);
-    });
-    return parser;
-}
-
 /**
  * Parse a right-associative binary operator.
  * 
- * @param prev_parser - The parser to parse the left and right expressions .
+ * @param prev_parser - The previous associativity level parser.
  * @param operator_parser - A parser that parses an operator and returns a constructor for the operator.
  * @returns A parser that parses a right-associative binary operator.
  */
@@ -251,31 +257,8 @@ function rightAssociativeBinaryOperatorParser(
     return parser;
 }
 
-/**
- * Parse an if-else expression.
- * ```
- * left if condition else right
- * ```
- * 
- * @param prev_parser - 
- * @returns A parser that parses an if-else expression.
- */
-function condition(prev_parser: parsimmon.Parser<AST.Expression>): parsimmon.Parser<AST.Expression> {
-    const parser: parsimmon.Parser<AST.Expression> = parsimmon.lazy(() => prev_parser.chain((a) => parsimmon
-        .seq(
-            parsimmon.string("if").trim(parsimmon.optWhitespace),
-            prev_parser,
-            parsimmon.string("else").trim(parsimmon.optWhitespace),
-            parser,
-        )
-        .map(([_if, condition, _else, b]) => new AST.Condition(condition, a, b))
-        .or(parsimmon.succeed(a))
-    ));
-    return parser;
-};
-
 // based on pythons associativity table: https://www.geeksforgeeks.org/precedence-and-associativity-of-operators-in-python/
-const expression_parser = ([
+const associativity_table = [
     (prev_parser: parsimmon.Parser<AST.Expression>) => rightAssociativeBinaryOperatorParser(prev_parser, createOperatorParser([
         { operator_str: "**", constructor: AST.Exponentiate, desc: "exponentiation" },
     ])),
@@ -308,10 +291,26 @@ const expression_parser = ([
     (prev_parser: parsimmon.Parser<AST.Expression>) => leftAssociativeBinaryOperatorParser(prev_parser, createOperatorParser([
         { operator_str: "or", constructor: AST.Or, desc: "or" },
     ])),
-    condition,
+    (prev_parser: parsimmon.Parser<AST.Expression>): parsimmon.Parser<AST.Expression> => {
+        const condition_parser: parsimmon.Parser<AST.Expression> = parsimmon.lazy(() => prev_parser.chain((a) => parsimmon
+            .seq(
+                parsimmon.string("if").trim(parsimmon.optWhitespace),
+                prev_parser,
+                parsimmon.string("else").trim(parsimmon.optWhitespace),
+                condition_parser,
+            )
+            .map(([_if, condition, _else, b]) => new AST.Condition(condition, a, b))
+            .or(parsimmon.succeed(a))
+        ));
+        return condition_parser;
+    },
     (prev_parser: parsimmon.Parser<AST.Expression>) => rightAssociativeBinaryOperatorParser(prev_parser, createOperatorParser([
         { operator_str: ":=", constructor: AST.Assignment, desc: "assignement operator" },
     ])),
-]).reduce((prev_parser, f) => f(prev_parser), primary_parser).trim(parsimmon.optWhitespace);
+];
+
+const expression_parser: parsimmon.Parser<AST.Expression> = parsimmon.lazy(() => {
+    return associativity_table.reduce((prev_parser, wrap_associativity_layer) => wrap_associativity_layer(prev_parser), primary_parser);
+});
 
 export default expression_parser;
